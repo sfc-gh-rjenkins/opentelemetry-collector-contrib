@@ -1,0 +1,16 @@
+receivers:
+  foundationdb:
+
+
+processors:
+exporters:
+  logging:
+
+service:
+  pipelines:
+    traces:
+      receivers: [foundationdb]
+      processors: []
+      exporters:
+        - logging
+

@@ -16,15 +16,19 @@ package foundationdbreceiver // import "github.com/open-telemetry/opentelemetry-
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/binary"
+	"io"
+	"time"
+
+	//	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"net"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/consumer"
+	"go.opentelemetry.io/collector/model/pdata"
 
 	"github.com/vmihailenco/msgpack/v5"
 	"go.opentelemetry.io/collector/receiver/receiverhelper"
@@ -46,7 +50,7 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// NewFactory creates a factory for the StatsD receiver.
+// NewFactory creates a factory for the foundationDBReceiver.
 func NewFactory() component.ReceiverFactory {
 	return receiverhelper.NewFactory(
 		typeStr,
@@ -72,14 +76,13 @@ func NewFoundationDBReceiver(settings component.ReceiverCreateSettings, config *
 	if err != nil {
 		log.Fatal(err)
 	}
-	return &foundationDBReceiver{server: ts}, nil
+	return &foundationDBReceiver{server: ts, consumer: consumer}, nil
 }
 
-// Start starts a UDP server that can process StatsD messages.
+// Start starts a UDP server that can process FoundationDB traces.
 func (f *foundationDBReceiver) Start(ctx context.Context, host component.Host) error {
-	var transferChan = make(chan string, 10)
 	go func() {
-		if err := f.server.ListenAndServe(f.consumer, transferChan); err != nil {
+		if err := f.server.ListenAndServe(f.consumer); err != nil {
 			if !errors.Is(err, net.ErrClosed) {
 				host.ReportFatalError(err)
 			}
@@ -89,7 +92,7 @@ func (f *foundationDBReceiver) Start(ctx context.Context, host component.Host) e
 	return nil
 }
 
-// Shutdown stops the StatsD receiver.
+// Shutdown the foundationDBReceiver receiver.
 func (f *foundationDBReceiver) Shutdown(context.Context) error {
 	return nil
 }
@@ -112,14 +115,17 @@ func NewUDPServer(addr string) (*udpServer, error) {
 	return &u, nil
 }
 
-func (u *udpServer) ListenAndServe(nextConsumer consumer.Traces, transferChan chan<- string) error {
+func (u *udpServer) ListenAndServe(nextConsumer consumer.Traces) error {
 	buf := make([]byte, 65527) // max size for udp packet body (assuming ipv6)
 	for {
 		n, _, err := u.packetConn.ReadFrom(buf)
 		if n > 0 {
 			bufCopy := make([]byte, n)
 			copy(bufCopy, buf)
-			u.handlePacket(bufCopy, transferChan)
+			processingErr := u.handlePacket(bufCopy, nextConsumer)
+			if processingErr != nil {
+				return processingErr
+			}
 		}
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok {
@@ -207,16 +213,103 @@ func (t *Trace) DecodeMsgpack(dec *msgpack.Decoder) error {
 	return nil
 }
 
-func (u *udpServer) handlePacket(data []byte, transferChan chan<- string) {
-    var trace Trace
-    err := msgpack.Unmarshal(data, &trace)
-    if err != nil {
-      fmt.Println(err)
-    }
-	out, err := json.MarshalIndent(trace, "", "  ")
-	if err != nil {
-		fmt.Println(err)
+func getTraces(trace *Trace) pdata.Traces {
+	traces := pdata.NewTraces()
+	curSpans := traces.ResourceSpans().AppendEmpty().InstrumentationLibrarySpans().AppendEmpty().Spans()
+	span := curSpans.AppendEmpty()
+	span.SetTraceID(pdata.NewTraceID(convertTraceId(trace.TraceID)))
+	span.SetSpanID(pdata.NewSpanID(convertSpanId(trace.SpanID)))
+	endTime := timestampFromFloat64(trace.StartTimestamp)
+	durSec, durNano := durationFromFloat64(trace.Duration)
+	endTime = endTime.Add(time.Second * time.Duration(durSec))
+	endTime = endTime.Add(time.Nanosecond * time.Duration(durNano))
+	span.SetStartTimestamp(pdata.NewTimestampFromTime(timestampFromFloat64(trace.StartTimestamp)))
+	span.SetEndTimestamp(pdata.NewTimestampFromTime(endTime))
+	span.SetKind(pdata.SpanKindServer)
+	span.Status().SetCode(pdata.StatusCodeOk)
+    span.Status().SetMessage("test-message")
+	span.SetName(trace.OperationName)
+    span.SetDroppedEventsCount(0)
+    span.SetDroppedAttributesCount(0)
+    span.SetDroppedLinksCount(0)
+	if len(trace.ParentSpanIDs) > 0 {
+		pId := trace.ParentSpanIDs[0].(uint64)
+		span.SetParentSpanID(pdata.NewSpanID(convertSpanId(pId)))
 	}
-	fmt.Println(string(out))
-	fmt.Printf("\n")
+
+	attrs := span.Attributes()
+	attrs.InsertString("sourceIP", trace.SourceIP)
+	for k, v := range trace.Tags {
+		attrs.InsertString(k, v.(string))
+	}
+
+
+	return traces
+}
+
+func durationFromFloat64(ts float64) (int64, int64) {
+	secs := int64(ts)
+	nsecs := int64((ts - float64(secs)) * 1e9)
+	return secs, nsecs
+}
+
+func timestampFromFloat64(ts float64) time.Time {
+	secs, nsecs := durationFromFloat64(ts)
+	t := time.Unix(secs, nsecs)
+	return t
+}
+
+func convertSpanId(v uint64) [8]byte {
+	b := [8]byte{
+		byte(0xff & v),
+		byte(0xff & (v >> 8)),
+		byte(0xff & (v >> 16)),
+		byte(0xff & (v >> 24)),
+		byte(0xff & (v >> 32)),
+		byte(0xff & (v >> 40)),
+		byte(0xff & (v >> 48)),
+		byte(0xff & (v >> 56))}
+	return b
+}
+
+func convertTraceId(traceID uint64) [16]byte {
+	b := make([]byte, 8)
+	binary.LittleEndian.PutUint64(b, traceID)
+	var td [16]byte
+	for i, x := range b {
+		td[i] = x
+	}
+	return td
+}
+
+func (u *udpServer) handlePacket(data []byte, consumer consumer.Traces) error {
+	var trace Trace
+	err := msgpack.Unmarshal(data, &trace)
+	if err != nil {
+		if err != io.EOF {
+			return err
+		}
+	}
+
+	traces := getTraces(&trace)
+	err = consumer.ConsumeTraces(context.Background(), traces)
+	if err != nil {
+		return err
+	}
+
+	return nil
+	// out, err := json.MarshalIndent(trace, "", "  ")
+	// if err != nil {
+	// 	fmt.Println(err)
+	// }
+	// //fmt.Println(string(out))
+	// fmt.Printf("\n")
+	//
+	// var traces pdata.NewTrace
+	// var curSpans pdata.SpanSlice
+	// span := curSpans.AppendEmpty()
+	// span.SetSpanID(pdata.NewSpanID())
+	// var ts pdata.Timestamp
+	// span.SetStartTimestamp()
+	//
 }

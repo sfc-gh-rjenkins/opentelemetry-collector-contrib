@@ -34,16 +34,24 @@ import (
 	"go.opentelemetry.io/collector/receiver/receiverhelper"
 )
 
-const typeStr = "foundationdb"
+const (
+	typeStr                 = "foundationdb"
+	defaultAddress          = "localhost:8889"
+	defaultMaxPacketSize    = 65_527 // max size for udp packet body (assuming ipv6)
+	defaultSocketBufferSize = 0
+)
 
 type foundationDBReceiver struct {
-	config.ReceiverSettings
+	config   *Config
 	server   *udpServer
 	consumer consumer.Traces
 }
 
 type Config struct {
-	config.ReceiverSettings
+	config.ReceiverSettings `mapstructure:",squash"`
+	Address                 string `mapstructure:"address"`
+	MaxPacketSize           int    `mapstructure:"max_packet_size"`
+	SocketBufferSize        int    `mapstructure:"socket_buffer_size"`
 }
 
 func (c *Config) validate() error {
@@ -60,8 +68,14 @@ func NewFactory() component.ReceiverFactory {
 }
 
 func createDefaultConfig() config.Receiver {
-	return &Config{}
+	return &Config{
+		ReceiverSettings: config.NewReceiverSettings(config.NewComponentID(typeStr)),
+		Address:          defaultAddress,
+		MaxPacketSize:    defaultMaxPacketSize,
+		SocketBufferSize: defaultSocketBufferSize,
+	}
 }
+
 func createTracesReceiver(ctx context.Context,
 	settings component.ReceiverCreateSettings,
 	cfg config.Receiver,
@@ -72,17 +86,17 @@ func createTracesReceiver(ctx context.Context,
 
 func NewFoundationDBReceiver(settings component.ReceiverCreateSettings, config *Config,
 	consumer consumer.Traces) (component.TracesReceiver, error) {
-	ts, err := NewUDPServer("localhost:8889")
+	ts, err := NewUDPServer(config.Address, config.SocketBufferSize)
 	if err != nil {
 		log.Fatal(err)
 	}
-	return &foundationDBReceiver{server: ts, consumer: consumer}, nil
+	return &foundationDBReceiver{server: ts, consumer: consumer, config: config}, nil
 }
 
 // Start starts a UDP server that can process FoundationDB traces.
 func (f *foundationDBReceiver) Start(ctx context.Context, host component.Host) error {
 	go func() {
-		if err := f.server.ListenAndServe(f.consumer); err != nil {
+		if err := f.server.ListenAndServe(f.consumer, f.config.MaxPacketSize); err != nil {
 			if !errors.Is(err, net.ErrClosed) {
 				host.ReportFatalError(err)
 			}
@@ -99,26 +113,37 @@ func (f *foundationDBReceiver) Shutdown(context.Context) error {
 
 // UDP Server Section
 type udpServer struct {
-	packetConn net.PacketConn
+	conn *net.UDPConn
 }
 
 // NewUDPServer creates a transport.Server using UDP as its transport.
-func NewUDPServer(addr string) (*udpServer, error) {
-	packetConn, err := net.ListenPacket("udp", addr)
+func NewUDPServer(addrString string, sockerBufferSize int) (*udpServer, error) {
+	addr, err := net.ResolveUDPAddr("udp", addrString)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := net.ListenUDP(addr.Network(), addr)
 	if err != nil {
 		return nil, err
 	}
 
+	if sockerBufferSize > 0 {
+		err := conn.SetReadBuffer(sockerBufferSize)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	u := udpServer{
-		packetConn: packetConn,
+      conn: conn,
 	}
 	return &u, nil
 }
 
-func (u *udpServer) ListenAndServe(nextConsumer consumer.Traces) error {
-	buf := make([]byte, 65527) // max size for udp packet body (assuming ipv6)
+func (u *udpServer) ListenAndServe(nextConsumer consumer.Traces, maxPacketSize int) error {
+	buf := make([]byte, maxPacketSize) // max size for udp packet body (assuming ipv6)
 	for {
-		n, _, err := u.packetConn.ReadFrom(buf)
+		n, _, err := u.conn.ReadFrom(buf)
 		if n > 0 {
 			bufCopy := make([]byte, n)
 			copy(bufCopy, buf)
@@ -139,7 +164,7 @@ func (u *udpServer) ListenAndServe(nextConsumer consumer.Traces) error {
 }
 
 func (u *udpServer) Close() error {
-	return u.packetConn.Close()
+	return u.conn.Close()
 }
 
 type Trace struct {
@@ -227,11 +252,11 @@ func getTraces(trace *Trace) pdata.Traces {
 	span.SetEndTimestamp(pdata.NewTimestampFromTime(endTime))
 	span.SetKind(pdata.SpanKindServer)
 	span.Status().SetCode(pdata.StatusCodeOk)
-    span.Status().SetMessage("test-message")
+	span.Status().SetMessage("test-message")
 	span.SetName(trace.OperationName)
-    span.SetDroppedEventsCount(0)
-    span.SetDroppedAttributesCount(0)
-    span.SetDroppedLinksCount(0)
+	span.SetDroppedEventsCount(0)
+	span.SetDroppedAttributesCount(0)
+	span.SetDroppedLinksCount(0)
 	if len(trace.ParentSpanIDs) > 0 {
 		pId := trace.ParentSpanIDs[0].(uint64)
 		span.SetParentSpanID(pdata.NewSpanID(convertSpanId(pId)))
@@ -242,7 +267,6 @@ func getTraces(trace *Trace) pdata.Traces {
 	for k, v := range trace.Tags {
 		attrs.InsertString(k, v.(string))
 	}
-
 
 	return traces
 }
@@ -277,7 +301,7 @@ func convertTraceId(traceID uint64) [16]byte {
 	binary.LittleEndian.PutUint64(b, traceID)
 	var td [16]byte
 	for i, x := range b {
-		td[i] = x
+		td[i+8] = x
 	}
 	return td
 }

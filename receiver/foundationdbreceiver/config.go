@@ -5,7 +5,7 @@ import (
 	"net"
 	"strconv"
 
-    "go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/config"
 )
 
 const (
@@ -15,6 +15,10 @@ const (
 	defaultSocketBufferSize = 0
 )
 
+var maxPacketSizeErr = fmt.Errorf("max_packet_size must be between 1 and 65535")
+var socketBufferSizeErr = fmt.Errorf("socket_buffer_size must be > 0")
+var portNumberRangeErr = fmt.Errorf("port number must be between 1 and 65535")
+
 type Config struct {
 	config.ReceiverSettings `mapstructure:",squash"`
 	Address                 string `mapstructure:"address"`
@@ -23,24 +27,24 @@ type Config struct {
 }
 
 func (c *Config) validate() error {
-  if c.MaxPacketSize > 65535 || c.MaxPacketSize <= 0 {
-    return fmt.Errorf("max_packet_size must be between 1 and 65535")
-  }
+	if c.MaxPacketSize > 65535 || c.MaxPacketSize <= 0 {
+		return maxPacketSizeErr
+	}
 
-  if c.SocketBufferSize < 0 {
-    return fmt.Errorf("socket_buffer_size must be > 0")
-  }
+	if c.SocketBufferSize < 0 {
+		return socketBufferSizeErr
+	}
 
-  err := validateAddress(c.Address)
-  if err != nil {
-    return err
-  }
-  return nil
+	err := validateAddress(c.Address)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // extract the port number from string in "address:port" format. If the
 // port number cannot be extracted returns an error.
-func validateAddress(endpoint string) (error) {
+func validateAddress(endpoint string) error {
 	_, portStr, err := net.SplitHostPort(endpoint)
 	if err != nil {
 		return fmt.Errorf("endpoint is not formatted correctly: %s", err.Error())
@@ -50,7 +54,7 @@ func validateAddress(endpoint string) (error) {
 		return fmt.Errorf("endpoint port is not a number: %s", err.Error())
 	}
 	if port < 1 || port > 65535 {
-		return fmt.Errorf("port number must be between 1 and 65535")
+		return portNumberRangeErr
 	}
 	return nil
 }

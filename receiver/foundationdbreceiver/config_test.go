@@ -1,6 +1,7 @@
 package foundationdbreceiver
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -34,4 +35,66 @@ func TestLoadConfig(t *testing.T) {
 		MaxPacketSize:    65535,
 		SocketBufferSize: 2097152,
 	}, r1)
+}
+
+func TestValidateConfig(t *testing.T) {
+	type test struct {
+		name   string
+		config *Config
+		error  error
+	}
+
+	tests := []test{
+		{
+			name: "maxPacketSizeTooSmall",
+			config: &Config{
+				MaxPacketSize: -100,
+			},
+			error: maxPacketSizeErr,
+		},
+		{
+			name: "maxPacketSizeTooLarge",
+			config: &Config{
+				MaxPacketSize: 65536,
+			},
+			error: maxPacketSizeErr,
+		},
+		{
+			name: "socketBufferSizeToSmall",
+			config: &Config{
+				MaxPacketSize:    65535,
+				SocketBufferSize: -1,
+			},
+			error: socketBufferSizeErr,
+		},
+		{
+			name: "improperAddress",
+			config: &Config{
+				MaxPacketSize: 65535,
+				Address:       "foo",
+			},
+			error: fmt.Errorf("endpoint is not formatted correctly: address foo: missing port in address"),
+		},
+		{
+			name: "improperNANPortAddress",
+			config: &Config{
+				MaxPacketSize: 65535,
+                Address:       "foo:xyx",
+			},
+			error: fmt.Errorf("endpoint port is not a number: strconv.ParseInt: parsing \"xyx\": invalid syntax"),
+		},
+		{
+			name: "illegalPortAddress",
+			config: &Config{
+				MaxPacketSize: 65535,
+                Address:       "foo:70000",
+			},
+			error: portNumberRangeErr,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.EqualError(t, test.config.validate(), test.error.Error())
+		})
+	}
 }

@@ -22,7 +22,6 @@ import (
 	"io"
 	"time"
 
-	//	"encoding/json"
 	"errors"
 	"net"
 
@@ -41,17 +40,23 @@ type foundationDBReceiver struct {
 	logger   *zap.Logger
 }
 
-// Start starts a UDP server that can process FoundationDB traces.
+type fdbTraceHandler interface {
+	Handle(data []byte) error
+}
+
+// Start the foundationDBReceiver.
 func (f *foundationDBReceiver) Start(ctx context.Context, host component.Host) error {
 	go func() {
-      f.logger.Info("Starting UDP server.")
-		if err := f.server.ListenAndServe(f.consumer, f.config.MaxPacketSize); err != nil {
+		f.logger.Info("Starting UDP server.")
+		if err := f.server.ListenAndServe(f, f.config.MaxPacketSize); err != nil {
 			if !errors.Is(err, net.ErrClosed) {
 				host.ReportFatalError(err)
 			}
 		}
 	}()
 
+	// In practice we have not seen the context being canceled and Done
+	// signaled however implementing for correctness.
 	go func() {
 		for {
 			select {
@@ -68,69 +73,15 @@ func (f *foundationDBReceiver) Start(ctx context.Context, host component.Host) e
 func (f *foundationDBReceiver) Shutdown(context.Context) error {
 	f.logger.Info("Trace receiver received Shutdown.")
 	err := f.server.conn.Close()
-    if err != nil {
-      f.logger.Sugar().Debugf("Error received attempting to close server: %s", err.Error())
-    }
+	if err != nil {
+		f.logger.Sugar().Debugf("Error received attempting to close server: %s", err.Error())
+	}
 	return err
 }
 
-// UDP Server Section
-type udpServer struct {
-	conn *net.UDPConn
-}
-
-// NewUDPServer creates a transport.Server using UDP as its transport.
-func NewUDPServer(addrString string, sockerBufferSize int) (*udpServer, error) {
-	addr, err := net.ResolveUDPAddr("udp", addrString)
-	if err != nil {
-		return nil, err
-	}
-	conn, err := net.ListenUDP(addr.Network(), addr)
-	if err != nil {
-		return nil, err
-	}
-
-	if sockerBufferSize > 0 {
-		err := conn.SetReadBuffer(sockerBufferSize)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	u := udpServer{
-		conn: conn,
-	}
-	return &u, nil
-}
-
-func (u *udpServer) ListenAndServe(nextConsumer consumer.Traces, maxPacketSize int) error {
-	buf := make([]byte, maxPacketSize) // max size for udp packet body (assuming ipv6)
-	for {
-		n, _, err := u.conn.ReadFrom(buf)
-		if n > 0 {
-			bufCopy := make([]byte, n)
-			copy(bufCopy, buf)
-			processingErr := u.handlePacket(bufCopy, nextConsumer)
-			if processingErr != nil {
-				return processingErr
-			}
-		}
-		if err != nil {
-			if netErr, ok := err.(net.Error); ok {
-				if netErr.Temporary() {
-					continue
-				}
-			}
-			return err
-		}
-	}
-}
-
-func (u *udpServer) Close() error {
-	return u.conn.Close()
-}
-
-func (u *udpServer) handlePacket(data []byte, consumer consumer.Traces) error {
+// Accepts a []byte of MessagePack encoded FoundationDB traces, converts to intermediary in memory
+// Trace struct format, then generates OTEL complian traces from data and forward to our trace consumer.
+func (f *foundationDBReceiver) Handle(data []byte) error {
 	var trace Trace
 	err := msgpack.Unmarshal(data, &trace)
 	if err != nil {
@@ -140,7 +91,7 @@ func (u *udpServer) handlePacket(data []byte, consumer consumer.Traces) error {
 	}
 
 	traces := getTraces(&trace)
-	err = consumer.ConsumeTraces(context.Background(), traces)
+	err = f.consumer.ConsumeTraces(context.Background(), traces)
 	if err != nil {
 		return err
 	}

@@ -1,13 +1,9 @@
 package foundationdbreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/foundationdbreceiver"
 
 import (
-	"context"
-	"io"
 	"net" // UDP Server Section
-
-	"github.com/vmihailenco/msgpack/v5"
-	"go.opentelemetry.io/collector/consumer"
 )
+
 type udpServer struct {
 	conn *net.UDPConn
 }
@@ -42,13 +38,13 @@ func (u *udpServer) ListenAndServe(handler fdbTraceHandler, maxPacketSize int) e
 		if n > 0 {
 			bufCopy := make([]byte, n)
 			copy(bufCopy, buf)
-            // TODO - Log and continue here?
+			// TODO - Log and continue here?
 			processingErr := handler.Handle(bufCopy)
 			if processingErr != nil {
 				return processingErr
 			}
 		}
-        // TODO should we check error first?
+		// TODO should we check error first?
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok {
 				if netErr.Temporary() {
@@ -63,4 +59,3 @@ func (u *udpServer) ListenAndServe(handler fdbTraceHandler, maxPacketSize int) e
 func (u *udpServer) Close() error {
 	return u.conn.Close()
 }
-

@@ -22,49 +22,19 @@ import (
 
 	//	"encoding/json"
 	"errors"
-	"log"
 	"net"
 
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/model/pdata"
 
 	"github.com/vmihailenco/msgpack/v5"
-	"go.opentelemetry.io/collector/receiver/receiverhelper"
 )
 
 type foundationDBReceiver struct {
 	config   *Config
 	server   *udpServer
 	consumer consumer.Traces
-}
-
-
-// NewFactory creates a factory for the foundationDBReceiver.
-func NewFactory() component.ReceiverFactory {
-	return receiverhelper.NewFactory(
-		typeStr,
-		createDefaultConfig,
-		receiverhelper.WithTraces(createTracesReceiver),
-	)
-}
-
-func createTracesReceiver(ctx context.Context,
-	settings component.ReceiverCreateSettings,
-	cfg config.Receiver,
-	consumer consumer.Traces) (component.TracesReceiver, error) {
-	c := cfg.(*Config)
-	return NewFoundationDBReceiver(settings, c, consumer)
-}
-
-func NewFoundationDBReceiver(settings component.ReceiverCreateSettings, config *Config,
-	consumer consumer.Traces) (component.TracesReceiver, error) {
-	ts, err := NewUDPServer(config.Address, config.SocketBufferSize)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return &foundationDBReceiver{server: ts, consumer: consumer, config: config}, nil
 }
 
 // Start starts a UDP server that can process FoundationDB traces.

@@ -8,13 +8,6 @@ import (
 	"go.opentelemetry.io/collector/config"
 )
 
-const (
-	typeStr                 = "foundationdb"
-	defaultAddress          = "localhost:8889"
-	defaultMaxPacketSize    = 65_527 // max size for udp packet body (assuming ipv6)
-	defaultSocketBufferSize = 0
-)
-
 var maxPacketSizeErr = fmt.Errorf("max_packet_size must be between 1 and 65535")
 var socketBufferSizeErr = fmt.Errorf("socket_buffer_size must be > 0")
 var portNumberRangeErr = fmt.Errorf("port number must be between 1 and 65535")
@@ -59,11 +52,3 @@ func validateAddress(endpoint string) error {
 	return nil
 }
 
-func createDefaultConfig() config.Receiver {
-	return &Config{
-		ReceiverSettings: config.NewReceiverSettings(config.NewComponentID(typeStr)),
-		Address:          defaultAddress,
-		MaxPacketSize:    defaultMaxPacketSize,
-		SocketBufferSize: defaultSocketBufferSize,
-	}
-}

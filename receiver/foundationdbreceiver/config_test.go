@@ -34,5 +34,4 @@ func TestLoadConfig(t *testing.T) {
 		MaxPacketSize:    65535,
 		SocketBufferSize: 2097152,
 	}, r1)
-
 }

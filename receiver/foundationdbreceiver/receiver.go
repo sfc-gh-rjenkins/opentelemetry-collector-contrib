@@ -17,6 +17,8 @@ package foundationdbreceiver // import "github.com/open-telemetry/opentelemetry-
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
+	"fmt"
 	"io"
 	"time"
 
@@ -27,6 +29,7 @@ import (
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/model/pdata"
+	"go.uber.org/zap"
 
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -35,14 +38,26 @@ type foundationDBReceiver struct {
 	config   *Config
 	server   *udpServer
 	consumer consumer.Traces
+	logger   *zap.Logger
 }
 
 // Start starts a UDP server that can process FoundationDB traces.
 func (f *foundationDBReceiver) Start(ctx context.Context, host component.Host) error {
 	go func() {
+      f.logger.Info("Starting UDP server.")
 		if err := f.server.ListenAndServe(f.consumer, f.config.MaxPacketSize); err != nil {
 			if !errors.Is(err, net.ErrClosed) {
 				host.ReportFatalError(err)
+			}
+		}
+	}()
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				f.logger.Info("Receiver selected Done signal.")
+				f.server.Close()
 			}
 		}
 	}()
@@ -51,7 +66,12 @@ func (f *foundationDBReceiver) Start(ctx context.Context, host component.Host) e
 
 // Shutdown the foundationDBReceiver receiver.
 func (f *foundationDBReceiver) Shutdown(context.Context) error {
-	return nil
+	f.logger.Info("Trace receiver received Shutdown.")
+	err := f.server.conn.Close()
+    if err != nil {
+      f.logger.Sugar().Debugf("Error received attempting to close server: %s", err.Error())
+    }
+	return err
 }
 
 // UDP Server Section
@@ -108,6 +128,24 @@ func (u *udpServer) ListenAndServe(nextConsumer consumer.Traces, maxPacketSize i
 
 func (u *udpServer) Close() error {
 	return u.conn.Close()
+}
+
+func (u *udpServer) handlePacket(data []byte, consumer consumer.Traces) error {
+	var trace Trace
+	err := msgpack.Unmarshal(data, &trace)
+	if err != nil {
+		if err != io.EOF {
+			return err
+		}
+	}
+
+	traces := getTraces(&trace)
+	err = consumer.ConsumeTraces(context.Background(), traces)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 type Trace struct {
@@ -249,34 +287,10 @@ func convertTraceId(traceID uint64) [16]byte {
 	return td
 }
 
-func (u *udpServer) handlePacket(data []byte, consumer consumer.Traces) error {
-	var trace Trace
-	err := msgpack.Unmarshal(data, &trace)
+func prettyPrintTrace(trace *Trace) {
+	out, err := json.MarshalIndent(trace, "", "  ")
 	if err != nil {
-		if err != io.EOF {
-			return err
-		}
+		fmt.Println(err)
 	}
-
-	traces := getTraces(&trace)
-	err = consumer.ConsumeTraces(context.Background(), traces)
-	if err != nil {
-		return err
-	}
-
-	return nil
-	// out, err := json.MarshalIndent(trace, "", "  ")
-	// if err != nil {
-	// 	fmt.Println(err)
-	// }
-	// //fmt.Println(string(out))
-	// fmt.Printf("\n")
-	//
-	// var traces pdata.NewTrace
-	// var curSpans pdata.SpanSlice
-	// span := curSpans.AppendEmpty()
-	// span.SetSpanID(pdata.NewSpanID())
-	// var ts pdata.Timestamp
-	// span.SetStartTimestamp()
-	//
+	fmt.Println(string(out))
 }

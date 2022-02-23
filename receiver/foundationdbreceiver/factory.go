@@ -39,7 +39,7 @@ func NewFoundationDBReceiver(settings component.ReceiverCreateSettings, config *
 	if err != nil {
       return nil, err
 	}
-	return &foundationDBReceiver{server: ts, consumer: consumer, config: config}, nil
+    return &foundationDBReceiver{server: ts, consumer: consumer, config: config, logger: settings.Logger}, nil
 }
 
 func createDefaultConfig() config.Receiver {

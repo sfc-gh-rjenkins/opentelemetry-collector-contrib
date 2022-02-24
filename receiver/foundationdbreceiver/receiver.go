@@ -100,6 +100,7 @@ func (f *foundationDBReceiver) Handle(data []byte) error {
 }
 
 type Trace struct {
+	ArrLen         int
 	SourceIP       string
 	TraceID        uint64
 	SpanID         uint64
@@ -113,7 +114,7 @@ type Trace struct {
 var _ msgpack.CustomDecoder = (*Trace)(nil)
 
 func (t *Trace) DecodeMsgpack(dec *msgpack.Decoder) error {
-	_, err := dec.DecodeArrayLen()
+	arrLen, err := dec.DecodeArrayLen()
 	if err != nil {
 		return err
 	}
@@ -158,6 +159,7 @@ func (t *Trace) DecodeMsgpack(dec *msgpack.Decoder) error {
 		return err
 	}
 
+	t.ArrLen = arrLen
 	t.SourceIP = sourceIP
 	t.TraceID = traceID
 	t.SpanID = spanID
@@ -166,6 +168,55 @@ func (t *Trace) DecodeMsgpack(dec *msgpack.Decoder) error {
 	t.OperationName = operation
 	t.Tags = tags
 	t.ParentSpanIDs = parentIds
+
+	return nil
+}
+
+func (t *Trace) EncodeMsgpack(enc *msgpack.Encoder) error {
+	err := enc.EncodeArrayLen(t.ArrLen)
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeString(t.SourceIP)
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeUint64(t.TraceID)
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeUint64(t.SpanID)
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeFloat64(t.StartTimestamp)
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeFloat64(t.Duration)
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeString(t.OperationName)
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeMap(t.Tags)
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeMulti(t.ParentSpanIDs)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }

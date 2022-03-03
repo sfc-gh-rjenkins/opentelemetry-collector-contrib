@@ -2,6 +2,7 @@ package foundationdbreceiver // import "github.com/open-telemetry/opentelemetry-
 
 import (
 	"context"
+	"fmt"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config"
@@ -30,6 +31,9 @@ func createTracesReceiver(ctx context.Context,
 	cfg config.Receiver,
 	consumer consumer.Traces) (component.TracesReceiver, error) {
 	c := cfg.(*Config)
+    if consumer == nil {
+      return nil, fmt.Errorf("nil consumer")
+    }
 	return NewFoundationDBReceiver(settings, c, consumer)
 }
 

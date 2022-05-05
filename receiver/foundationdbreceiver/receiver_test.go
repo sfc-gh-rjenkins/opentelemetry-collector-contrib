@@ -1,157 +1,119 @@
+// Copyright 2022 OpenTelemetry Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package foundationdbreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/foundationdbreceiver"
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/vmihailenco/msgpack/v5"
-	"go.opentelemetry.io/collector/consumer"
-	"go.opentelemetry.io/collector/consumer/consumertest"
-	"go.opentelemetry.io/collector/model/pdata"
+	"go.opentelemetry.io/collector/component/componenttest"
 	"go.uber.org/zap"
 )
 
-type MockTraceConsumer struct {
-	verifier func(td pdata.Traces) error
-	err      error
+type mockUDPServer struct {
+	started   bool
+	closed    bool
+	startWait *sync.WaitGroup
+	closeWait *sync.WaitGroup
 }
 
-func (mtc *MockTraceConsumer) ConsumeTraces(ctx context.Context, td pdata.Traces) error {
-	if mtc.verifier != nil {
-		err := mtc.verifier(td)
-		if err != nil {
-			return err
-		}
-	}
-	return mtc.err
+func (m *mockUDPServer) ListenAndServe(handler fdbTraceHandler, maxPacketSize int) error {
+	m.started = true
+	m.startWait.Done()
+	return nil
 }
 
-func (mtc *MockTraceConsumer) Capabilities() consumer.Capabilities {
-	return consumer.Capabilities{}
+func (m *mockUDPServer) Close() error {
+	m.closed = true
+	m.closeWait.Done()
+	return nil
 }
 
-func TestProcessTrace(t *testing.T) {
-	trace := &Trace{
-		ArrLen:         1,
-		SourceIP:       "192.158.0.1:4000",
-		TraceID:        8793247892340890,
-		SpanID:         2389203490823490,
-		StartTimestamp: 1646334304.666,
-		Duration:       1000,
-		OperationName:  "StorageUpdate",
-		Tags:           map[string]interface{}{},
-		ParentSpanIDs:  []interface{}{90823908902384},
-	}
-	data, err := msgpack.Marshal(trace)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	verifyTrace := func(td pdata.Traces) error {
-		assert.Equal(t, 1, td.SpanCount())
-        spans := td.ResourceSpans()
-        span := spans.At(0).InstrumentationLibrarySpans().At(0).Spans().At(0)
-        assert.Equal(t, "00000000000000009a800b91693d1f00", span.TraceID().HexString())
-        assert.Equal(t, "42dd5dc9f77c0800", span.SpanID().HexString())
-        assert.Equal(t, "2022-03-03 19:05:04.665999889 +0000 UTC", span.StartTimestamp().String())
-        assert.Equal(t, "2022-03-03 19:21:44.665999889 +0000 UTC", span.EndTimestamp().String())
-        assert.Equal(t, pdata.SpanKind(2), span.Kind())
-        assert.Equal(t, pdata.StatusCodeOk, span.Status().Code())
-        assert.Equal(t, "test-message", span.Status().Message())
-        assert.Equal(t, "StorageUpdate", span.Name())
-        assert.Equal(t, uint32(0), span.DroppedEventsCount())
-        assert.Equal(t, uint32(0), span.DroppedAttributesCount())
-        assert.Equal(t, uint32(0), span.DroppedLinksCount())
-        assert.Equal(t, "f0c5d3969a520000", span.ParentSpanID().HexString())
-        attr, ok := span.Attributes().Get("sourceIP")
-        assert.True(t, ok)
-        assert.Equal(t, "192.158.0.1:4000", attr.StringVal())
-		return nil
-	}
-
-    mockConsumer := MockTraceConsumer{
-    	verifier: verifyTrace,
-    }
-
+func TestStartsTraceListener(t *testing.T) {
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
 	receiver := &foundationDBReceiver{
 		config:   &Config{},
-		server:   &udpServer{},
-		logger:   &zap.Logger{},
-		consumer: &mockConsumer,
+		server:   &mockUDPServer{startWait: wg},
+		logger:   zap.NewNop(),
+		consumer: &MockTraceConsumer{},
+		handler:  &openTelemetryHandler{},
 	}
-
-	err = receiver.Handle(data)
+	err := receiver.Start(context.Background(), componenttest.NewNopHost())
 	assert.NoError(t, err)
-
+	assert.True(t, waitTimeout(wg, time.Second*5))
+	assert.True(t, receiver.server.(*mockUDPServer).started)
+	assert.False(t, receiver.server.(*mockUDPServer).closed)
 }
 
-func TestProcessMalformed(t *testing.T) {
+func TestClosesWhenContextCanceled(t *testing.T) {
+	startWait := &sync.WaitGroup{}
+	startWait.Add(1)
+	closeWait := &sync.WaitGroup{}
+	closeWait.Add(1)
+	ctx, cancel := context.WithCancel(context.Background())
 	receiver := &foundationDBReceiver{
 		config:   &Config{},
-		server:   &udpServer{},
-		consumer: consumertest.NewNop(),
-		logger:   &zap.Logger{},
+		server:   &mockUDPServer{startWait: startWait, closeWait: closeWait},
+		logger:   zap.NewNop(),
+		consumer: &MockTraceConsumer{},
+		handler:  &openTelemetryHandler{},
 	}
-
-	err := receiver.Handle([]byte("foo"))
-	assert.Error(t, err, "expected error")
+	err := receiver.Start(ctx, componenttest.NewNopHost())
+	assert.NoError(t, err)
+	assert.True(t, waitTimeout(startWait, time.Second*5))
+	assert.True(t, receiver.server.(*mockUDPServer).started)
+	cancel()
+	assert.True(t, waitTimeout(closeWait, time.Second*5))
+	assert.True(t, receiver.server.(*mockUDPServer).closed)
 }
 
-func BenchmarkHandleTraceNoTagsOneParent(b *testing.B) {
-	trace := &Trace{
-		ArrLen:         1,
-		SourceIP:       "192.158.0.1:4000",
-		TraceID:        8793247892340890,
-		SpanID:         2389203490823490,
-		StartTimestamp: 12282389238923,
-		Duration:       100,
-		OperationName:  "foobar",
-		Tags:           map[string]interface{}{},
-		ParentSpanIDs:  []interface{}{90823908902384},
+func TestShutdownCloses(t *testing.T) {
+	startWait := &sync.WaitGroup{}
+	startWait.Add(1)
+	closeWait := &sync.WaitGroup{}
+	closeWait.Add(1)
+	receiver := &foundationDBReceiver{
+		config:   &Config{},
+		server:   &mockUDPServer{startWait: startWait, closeWait: closeWait},
+		logger:   zap.NewNop(),
+		consumer: &MockTraceConsumer{},
+		handler:  &openTelemetryHandler{},
 	}
-	data, err := msgpack.Marshal(trace)
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	fdb := &foundationDBReceiver{consumer: &MockTraceConsumer{}}
-	for i := 0; i < b.N; i++ {
-		err := fdb.Handle(data)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
+	err := receiver.Start(context.Background(), componenttest.NewNopHost())
+	assert.NoError(t, err)
+	assert.True(t, waitTimeout(startWait, time.Second*5))
+	assert.True(t, receiver.server.(*mockUDPServer).started)
+    err = receiver.Shutdown(context.Background())
+	assert.True(t, waitTimeout(closeWait, time.Second*5))
+	assert.True(t, receiver.server.(*mockUDPServer).closed)
 }
 
-func BenchmarkHandleTraceFiveTagsThreeParent(b *testing.B) {
-	trace := &Trace{
-		ArrLen:         1,
-		SourceIP:       "192.158.0.1:4000",
-		TraceID:        8793247892340890,
-		SpanID:         2389203490823490,
-		StartTimestamp: 12282389238923,
-		Duration:       100,
-		OperationName:  "foobar",
-		Tags: map[string]interface{}{
-			"foo":               "a very long value should go here",
-			"customerID":        "abc-555444-asx",
-			"jobID":             "78989234920-234-0234908",
-			"availability-zone": "us-west-2c",
-			"region":            "us-west",
-		},
-		ParentSpanIDs: []interface{}{90823908902384, 989789796876868},
-	}
-	data, err := msgpack.Marshal(trace)
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	fdb := &foundationDBReceiver{consumer: &MockTraceConsumer{}}
-	for i := 0; i < b.N; i++ {
-		err := fdb.Handle(data)
-		if err != nil {
-			b.Fatal(err)
-		}
+func waitTimeout(wg *sync.WaitGroup, timeout time.Duration) bool {
+	c := make(chan struct{})
+	go func() {
+		defer close(c)
+		wg.Wait()
+	}()
+	select {
+	case <-c:
+		return true
+	case <-time.After(timeout):
+		return false
 	}
 }

@@ -11,12 +11,19 @@ import (
 var maxPacketSizeErr = fmt.Errorf("max_packet_size must be between 1 and 65535")
 var socketBufferSizeErr = fmt.Errorf("socket_buffer_size must be > 0")
 var portNumberRangeErr = fmt.Errorf("port number must be between 1 and 65535")
+var formatErr = fmt.Errorf("format must be either opentelemetry or opentracing")
+
+const (
+	OPENTRACING   = "opentracing"
+	OPENTELEMETRY = "opentelemetry"
+)
 
 type Config struct {
 	config.ReceiverSettings `mapstructure:",squash"`
 	Address                 string `mapstructure:"address"`
 	MaxPacketSize           int    `mapstructure:"max_packet_size"`
 	SocketBufferSize        int    `mapstructure:"socket_buffer_size"`
+	Format                  string `mapstructure:"format"`
 }
 
 func (c *Config) validate() error {
@@ -26,6 +33,10 @@ func (c *Config) validate() error {
 
 	if c.SocketBufferSize < 0 {
 		return socketBufferSizeErr
+	}
+
+	if c.Format != OPENTRACING && c.Format != OPENTELEMETRY {
+		return formatErr
 	}
 
 	err := validateAddress(c.Address)
@@ -51,4 +62,3 @@ func validateAddress(endpoint string) error {
 	}
 	return nil
 }
-

@@ -4,6 +4,11 @@ import (
 	"net" // UDP Server Section
 )
 
+type fdbTraceListener interface {
+  ListenAndServe(handler fdbTraceHandler, maxPacketSize int) error
+  Close() error
+}
+
 type udpServer struct {
 	conn *net.UDPConn
 }
@@ -44,7 +49,6 @@ func (u *udpServer) ListenAndServe(handler fdbTraceHandler, maxPacketSize int) e
 				return processingErr
 			}
 		}
-		// TODO should we check error first?
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok {
 				if netErr.Temporary() {

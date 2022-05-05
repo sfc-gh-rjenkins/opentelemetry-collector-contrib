@@ -15,6 +15,7 @@ const (
 	defaultAddress          = "localhost:8889"
 	defaultMaxPacketSize    = 65_527 // max size for udp packet body (assuming ipv6)
 	defaultSocketBufferSize = 0
+	defaultFormat           = "opentelemetry"
 )
 
 // NewFactory creates a factory for the foundationDBReceiver.
@@ -31,9 +32,10 @@ func createTracesReceiver(ctx context.Context,
 	cfg config.Receiver,
 	consumer consumer.Traces) (component.TracesReceiver, error) {
 	c := cfg.(*Config)
-    if consumer == nil {
-      return nil, fmt.Errorf("nil consumer")
-    }
+	if consumer == nil {
+		return nil, fmt.Errorf("nil consumer")
+	}
+
 	return NewFoundationDBReceiver(settings, c, consumer)
 }
 
@@ -41,9 +43,24 @@ func NewFoundationDBReceiver(settings component.ReceiverCreateSettings, config *
 	consumer consumer.Traces) (component.TracesReceiver, error) {
 	ts, err := NewUDPServer(config.Address, config.SocketBufferSize)
 	if err != nil {
-      return nil, err
+		return nil, err
 	}
-    return &foundationDBReceiver{server: ts, consumer: consumer, config: config, logger: settings.Logger}, nil
+	handler := createHandler(config, consumer)
+	if handler == nil {
+      return nil, fmt.Errorf("unable to create handler, tracing format %s unsupported", config.Format)
+	}
+	return &foundationDBReceiver{server: ts, consumer: consumer, config: config, logger: settings.Logger, handler: handler}, nil
+}
+
+func createHandler(c *Config, consumer consumer.Traces) fdbTraceHandler {
+	switch {
+	case c.Format == OPENTELEMETRY:
+		return &openTelemetryHandler{consumer: consumer}
+	case c.Format == OPENTRACING:
+		return &openTracingHandler{consumer: consumer}
+	default:
+		return nil
+	}
 }
 
 func createDefaultConfig() config.Receiver {
@@ -52,6 +69,6 @@ func createDefaultConfig() config.Receiver {
 		Address:          defaultAddress,
 		MaxPacketSize:    defaultMaxPacketSize,
 		SocketBufferSize: defaultSocketBufferSize,
+		Format:           defaultFormat,
 	}
 }
-

@@ -29,7 +29,7 @@ func (mtc *MockTraceConsumer) Capabilities() consumer.Capabilities {
 	return consumer.Capabilities{}
 }
 
-func TestHandleOpenTracingTrace(t *testing.T) {
+func TestOpenTracingHandler(t *testing.T) {
 	trace := &OpenTracing{
 		ArrLen:         1,
 		SourceIP:       "192.158.0.1:4000",
@@ -73,13 +73,13 @@ func TestHandleOpenTracingTrace(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestProcessMalformed(t *testing.T) {
+func TestOpenTracingMalformed(t *testing.T) {
 	handler := openTracingHandler{}
 	err := handler.Handle([]byte("foo"))
 	assert.Error(t, err, "expected error")
 }
 
-func BenchmarkHandleTraceNoTagsOneParent(b *testing.B) {
+func BenchmarkOpenTracingNoTags(b *testing.B) {
 	trace := &OpenTracing{
 		ArrLen:         1,
 		SourceIP:       "192.158.0.1:4000",
@@ -105,7 +105,7 @@ func BenchmarkHandleTraceNoTagsOneParent(b *testing.B) {
 	}
 }
 
-func BenchmarkHandleTraceFiveTagsThreeParent(b *testing.B) {
+func BenchmarkOpenTracingTagsAndParents(b *testing.B) {
 	trace := &OpenTracing{
 		ArrLen:         1,
 		SourceIP:       "192.158.0.1:4000",

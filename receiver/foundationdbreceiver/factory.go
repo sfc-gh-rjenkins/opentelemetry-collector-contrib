@@ -49,7 +49,7 @@ func NewFoundationDBReceiver(settings component.ReceiverCreateSettings, config *
 	if handler == nil {
       return nil, fmt.Errorf("unable to create handler, tracing format %s unsupported", config.Format)
 	}
-	return &foundationDBReceiver{server: ts, consumer: consumer, config: config, logger: settings.Logger, handler: handler}, nil
+	return &foundationDBReceiver{listener: ts, consumer: consumer, config: config, logger: settings.Logger, handler: handler}, nil
 }
 
 func createHandler(c *Config, consumer consumer.Traces) fdbTraceHandler {

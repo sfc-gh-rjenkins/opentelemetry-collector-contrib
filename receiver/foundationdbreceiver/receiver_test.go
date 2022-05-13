@@ -25,20 +25,20 @@ import (
 	"go.uber.org/zap"
 )
 
-type mockUDPServer struct {
+type mockTraceListener struct {
 	started   bool
 	closed    bool
 	startWait *sync.WaitGroup
 	closeWait *sync.WaitGroup
 }
 
-func (m *mockUDPServer) ListenAndServe(handler fdbTraceHandler, maxPacketSize int) error {
+func (m *mockTraceListener) ListenAndServe(handler fdbTraceHandler, maxPacketSize int) error {
 	m.started = true
 	m.startWait.Done()
 	return nil
 }
 
-func (m *mockUDPServer) Close() error {
+func (m *mockTraceListener) Close() error {
 	m.closed = true
 	m.closeWait.Done()
 	return nil
@@ -49,7 +49,7 @@ func TestStartsTraceListener(t *testing.T) {
 	wg.Add(1)
 	receiver := &foundationDBReceiver{
 		config:   &Config{},
-		server:   &mockUDPServer{startWait: wg},
+		listener: &mockTraceListener{startWait: wg},
 		logger:   zap.NewNop(),
 		consumer: &MockTraceConsumer{},
 		handler:  &openTelemetryHandler{},
@@ -57,8 +57,8 @@ func TestStartsTraceListener(t *testing.T) {
 	err := receiver.Start(context.Background(), componenttest.NewNopHost())
 	assert.NoError(t, err)
 	assert.True(t, waitTimeout(wg, time.Second*5))
-	assert.True(t, receiver.server.(*mockUDPServer).started)
-	assert.False(t, receiver.server.(*mockUDPServer).closed)
+	assert.True(t, receiver.listener.(*mockTraceListener).started)
+	assert.False(t, receiver.listener.(*mockTraceListener).closed)
 }
 
 func TestClosesWhenContextCanceled(t *testing.T) {
@@ -69,7 +69,7 @@ func TestClosesWhenContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	receiver := &foundationDBReceiver{
 		config:   &Config{},
-		server:   &mockUDPServer{startWait: startWait, closeWait: closeWait},
+		listener: &mockTraceListener{startWait: startWait, closeWait: closeWait},
 		logger:   zap.NewNop(),
 		consumer: &MockTraceConsumer{},
 		handler:  &openTelemetryHandler{},
@@ -77,10 +77,10 @@ func TestClosesWhenContextCanceled(t *testing.T) {
 	err := receiver.Start(ctx, componenttest.NewNopHost())
 	assert.NoError(t, err)
 	assert.True(t, waitTimeout(startWait, time.Second*5))
-	assert.True(t, receiver.server.(*mockUDPServer).started)
+	assert.True(t, receiver.listener.(*mockTraceListener).started)
 	cancel()
 	assert.True(t, waitTimeout(closeWait, time.Second*5))
-	assert.True(t, receiver.server.(*mockUDPServer).closed)
+	assert.True(t, receiver.listener.(*mockTraceListener).closed)
 }
 
 func TestShutdownCloses(t *testing.T) {
@@ -90,7 +90,7 @@ func TestShutdownCloses(t *testing.T) {
 	closeWait.Add(1)
 	receiver := &foundationDBReceiver{
 		config:   &Config{},
-		server:   &mockUDPServer{startWait: startWait, closeWait: closeWait},
+		listener: &mockTraceListener{startWait: startWait, closeWait: closeWait},
 		logger:   zap.NewNop(),
 		consumer: &MockTraceConsumer{},
 		handler:  &openTelemetryHandler{},
@@ -98,10 +98,10 @@ func TestShutdownCloses(t *testing.T) {
 	err := receiver.Start(context.Background(), componenttest.NewNopHost())
 	assert.NoError(t, err)
 	assert.True(t, waitTimeout(startWait, time.Second*5))
-	assert.True(t, receiver.server.(*mockUDPServer).started)
-    err = receiver.Shutdown(context.Background())
+	assert.True(t, receiver.listener.(*mockTraceListener).started)
+	err = receiver.Shutdown(context.Background())
 	assert.True(t, waitTimeout(closeWait, time.Second*5))
-	assert.True(t, receiver.server.(*mockUDPServer).closed)
+	assert.True(t, receiver.listener.(*mockTraceListener).closed)
 }
 
 func waitTimeout(wg *sync.WaitGroup, timeout time.Duration) bool {

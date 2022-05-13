@@ -2,6 +2,7 @@ package foundationdbreceiver // import "github.com/open-telemetry/opentelemetry-
 
 import (
 	"encoding/binary"
+	"fmt"
 	"time"
 
 	"github.com/vmihailenco/msgpack/v5"
@@ -101,6 +102,9 @@ func (t *Trace) DecodeMsgpack(dec *msgpack.Decoder) error {
 	}
 
 	linksLen, err := dec.DecodeArrayLen()
+	if err != nil {
+		return err
+	}
 
 	var links []SpanContext
 	for i := 0; i < linksLen; i++ {
@@ -108,19 +112,16 @@ func (t *Trace) DecodeMsgpack(dec *msgpack.Decoder) error {
 		if err != nil {
 			return err
 		}
-
 		linkSecond, err := dec.DecodeUint64()
 		if err != nil {
 			return err
 		}
 
 		linkTraceId := getTraceId(linkFirst, linkSecond)
-
 		spanId, err := dec.DecodeUint64()
 		if err != nil {
 			return err
 		}
-
 		links = append(links, SpanContext{TraceID: linkTraceId, SpanID: spanId})
 	}
 
@@ -135,24 +136,10 @@ func (t *Trace) DecodeMsgpack(dec *msgpack.Decoder) error {
 		if err != nil {
 			return err
 		}
-
-		attributes := make(map[string]interface{})
-		attributesLen, err := dec.DecodeArrayLen()
+		attributes, err := dec.DecodeMap()
 		if err != nil {
 			return err
 		}
-		for i := 0; i < attributesLen; i++ {
-			key, err := dec.DecodeString()
-			if err != nil {
-				return err
-			}
-			value, err := dec.DecodeString()
-			if err != nil {
-				return err
-			}
-			attributes[key] = value
-		}
-
 		events = append(events, Event{Name: eventName, EventTime: eventTime, Attributes: attributes})
 	}
 
@@ -178,6 +165,177 @@ func (t *Trace) DecodeMsgpack(dec *msgpack.Decoder) error {
 	return nil
 }
 
+func (t *Trace) EncodeMsgpack(enc *msgpack.Encoder) error {
+	err := enc.EncodeArrayLen(t.ArrLen)
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeUint64(binary.LittleEndian.Uint64(t.TraceID[0:8]))
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeUint64(binary.LittleEndian.Uint64(t.TraceID[8:16]))
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeUint64(t.SpanID)
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeUint64(binary.LittleEndian.Uint64(t.ParentTraceID[0:8]))
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeUint64(binary.LittleEndian.Uint64(t.ParentTraceID[8:16]))
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeUint64(t.ParentSpanID)
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeString(t.OperationName)
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeFloat64(t.StartTimestamp)
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeFloat64(t.EndTimestamp)
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeUint8(t.Kind)
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeUint8(t.Status)
+	if err != nil {
+		return err
+	}
+
+	err = enc.EncodeArrayLen(len(t.Links))
+	if err != nil {
+		return err
+	}
+	for _, l := range t.Links {
+		err = enc.EncodeUint64(binary.LittleEndian.Uint64(l.TraceID[0:8]))
+		if err != nil {
+			return err
+		}
+		err = enc.EncodeUint64(binary.LittleEndian.Uint64(l.TraceID[8:16]))
+		if err != nil {
+			return err
+		}
+		err = enc.EncodeUint64(l.SpanID)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = enc.EncodeArrayLen(len(t.Events))
+	if err != nil {
+		return err
+	}
+	for _, e := range t.Events {
+		err = enc.EncodeString(e.Name)
+		if err != nil {
+			return err
+		}
+		err = enc.EncodeFloat64(e.EventTime)
+		if err != nil {
+			return err
+		}
+		err = enc.EncodeMap(e.Attributes)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = enc.EncodeMap(t.Attributes)
+	return err
+}
+
+func isPrintable(b byte) bool {
+	return 32 <= b && b <= 126
+}
+
+func base16Char(c byte) (error, byte) {
+	switch (c%16 + 16) % 16 {
+	case 0:
+		return nil, '0'
+	case 1:
+		return nil, '1'
+	case 2:
+		return nil, '2'
+	case 3:
+		return nil, '3'
+	case 4:
+		return nil, '4'
+	case 5:
+		return nil, '5'
+	case 6:
+		return nil, '6'
+	case 7:
+		return nil, '7'
+	case 8:
+		return nil, '8'
+	case 9:
+		return nil, '9'
+	case 10:
+		return nil, 'a'
+	case 11:
+		return nil, 'b'
+	case 12:
+		return nil, 'c'
+	case 13:
+		return nil, 'd'
+	case 14:
+		return nil, 'e'
+	case 15:
+		return nil, 'f'
+	default:
+		return fmt.Errorf("unformattable byte"), 0
+	}
+}
+
+func formatTag(v string) string {
+	var result []byte
+	data := []byte(v)
+	for _, c := range data {
+		if c == '\\' {
+			result = append(result, '\\')
+			result = append(result, '\\')
+		} else if isPrintable(c) {
+			result = append(result, c)
+		} else {
+			result = append(result, '\\')
+			result = append(result, 'x')
+			err, b := base16Char(c / 16)
+			if err == nil {
+				result = append(result, b)
+			}
+			err, b = base16Char(c)
+			if err == nil {
+				result = append(result, b)
+			}
+		}
+	}
+	return string(result)
+}
+
 func (t *Trace) getSpan(span *pdata.Span) {
 	span.SetTraceID(pdata.NewTraceID(t.TraceID))
 	span.SetSpanID(pdata.NewSpanID(uint64ToBytes(t.SpanID)))
@@ -193,7 +351,9 @@ func (t *Trace) getSpan(span *pdata.Span) {
 
 	attrs := span.Attributes()
 	for k, v := range t.Attributes {
-		attrs.InsertString(k, v.(string))
+		formattedKey := formatTag(k)
+		formattedValue := formatTag(v.(string))
+		attrs.InsertString(formattedKey, formattedValue)
 	}
 
 	links := span.Links()
@@ -330,11 +490,7 @@ func (t *OpenTracing) EncodeMsgpack(enc *msgpack.Encoder) error {
 	}
 
 	err = enc.EncodeMulti(t.ParentSpanIDs)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 func (t *OpenTracing) getSpan(span *pdata.Span) {

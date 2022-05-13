@@ -26,7 +26,7 @@ import (
 
 type foundationDBReceiver struct {
 	config   *Config
-	server   fdbTraceListener
+	listener fdbTraceListener
 	consumer consumer.Traces
 	logger   *zap.Logger
 	handler  fdbTraceHandler
@@ -36,7 +36,7 @@ type foundationDBReceiver struct {
 func (f *foundationDBReceiver) Start(ctx context.Context, host component.Host) error {
 	go func() {
 		f.logger.Info("Starting FoundationDB UDP Trace listener server.")
-		if err := f.server.ListenAndServe(f.handler, f.config.MaxPacketSize); err != nil {
+		if err := f.listener.ListenAndServe(f.handler, f.config.MaxPacketSize); err != nil {
 			f.logger.Info("FoundationDB UDP Trace listener server stopped.")
 			if !errors.Is(err, net.ErrClosed) {
 				host.ReportFatalError(err)
@@ -50,8 +50,8 @@ func (f *foundationDBReceiver) Start(ctx context.Context, host component.Host) e
 			select {
 			case <-ctx.Done():
 				f.logger.Info("FoundationDB receiver selected Done signal.")
-                f.server.Close()
-                return
+				f.listener.Close()
+				return
 			}
 		}
 	}()
@@ -61,7 +61,7 @@ func (f *foundationDBReceiver) Start(ctx context.Context, host component.Host) e
 // Shutdown the foundationDBReceiver receiver.
 func (f *foundationDBReceiver) Shutdown(context.Context) error {
 	f.logger.Info("FoundationDB Trace receiver in Shutdown.")
-	err := f.server.Close()
+	err := f.listener.Close()
 	if err != nil {
 		f.logger.Sugar().Debugf("Error received attempting to close server: %s", err.Error())
 	}

@@ -2,6 +2,7 @@ package foundationdbreceiver // import "github.com/open-telemetry/opentelemetry-
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	"github.com/vmihailenco/msgpack/v5"
@@ -46,5 +47,10 @@ func (h *openTelemetryHandler) Handle(data []byte) error {
 	}
 	span := traces.ResourceSpans().AppendEmpty().InstrumentationLibrarySpans().AppendEmpty().Spans().AppendEmpty()
 	trace.getSpan(&span)
-	return h.consumer.ConsumeTraces(context.Background(), traces)
+    err = h.consumer.ConsumeTraces(context.Background(), traces)
+    if err != nil {
+      fmt.Printf("error is %s\n", err)
+    }
+
+    return err
 }

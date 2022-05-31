@@ -3,7 +3,6 @@ package foundationdbreceiver // import "github.com/open-telemetry/opentelemetry-
 import (
 	"encoding/binary"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/vmihailenco/msgpack/v5"

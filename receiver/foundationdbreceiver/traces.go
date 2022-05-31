@@ -3,6 +3,7 @@ package foundationdbreceiver // import "github.com/open-telemetry/opentelemetry-
 import (
 	"encoding/binary"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/vmihailenco/msgpack/v5"
@@ -24,7 +25,6 @@ type Trace struct {
 	ArrLen         int
 	TraceID        [16]byte
 	SpanID         uint64
-	ParentTraceID  [16]byte
 	ParentSpanID   uint64
 	OperationName  string
 	StartTimestamp float64
@@ -58,18 +58,6 @@ func (t *Trace) DecodeMsgpack(dec *msgpack.Decoder) error {
 	if err != nil {
 		return err
 	}
-
-	parentTraceFirst, err := dec.DecodeUint64()
-	if err != nil {
-		return err
-	}
-
-	parentTraceSecond, err := dec.DecodeUint64()
-	if err != nil {
-		return err
-	}
-
-	parentTraceId := getTraceId(parentTraceFirst, parentTraceSecond)
 
 	parentSpanID, err := dec.DecodeUint64()
 	if err != nil {
@@ -151,7 +139,6 @@ func (t *Trace) DecodeMsgpack(dec *msgpack.Decoder) error {
 	t.ArrLen = arrLen
 	t.TraceID = traceId
 	t.SpanID = spanID
-	t.ParentTraceID = parentTraceId
 	t.ParentSpanID = parentSpanID
 	t.OperationName = operation
 	t.StartTimestamp = startTime
@@ -182,16 +169,6 @@ func (t *Trace) EncodeMsgpack(enc *msgpack.Encoder) error {
 	}
 
 	err = enc.EncodeUint64(t.SpanID)
-	if err != nil {
-		return err
-	}
-
-	err = enc.EncodeUint64(binary.LittleEndian.Uint64(t.ParentTraceID[0:8]))
-	if err != nil {
-		return err
-	}
-
-	err = enc.EncodeUint64(binary.LittleEndian.Uint64(t.ParentTraceID[8:16]))
 	if err != nil {
 		return err
 	}

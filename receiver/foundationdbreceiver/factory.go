@@ -7,6 +7,7 @@ import (
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/consumer"
+	"go.opentelemetry.io/collector/obsreport"
 	"go.opentelemetry.io/collector/receiver/receiverhelper"
 )
 
@@ -45,19 +46,24 @@ func NewFoundationDBReceiver(settings component.ReceiverCreateSettings, config *
 	if err != nil {
 		return nil, err
 	}
-	handler := createHandler(config, consumer)
+	obsrecv := obsreport.NewReceiver(obsreport.ReceiverSettings{
+		ReceiverID:             config.ID(),
+		Transport:              "udp",
+		ReceiverCreateSettings: settings,
+	})
+	handler := createHandler(config, consumer, obsrecv)
 	if handler == nil {
-      return nil, fmt.Errorf("unable to create handler, tracing format %s unsupported", config.Format)
+		return nil, fmt.Errorf("unable to create handler, tracing format %s unsupported", config.Format)
 	}
 	return &foundationDBReceiver{listener: ts, consumer: consumer, config: config, logger: settings.Logger, handler: handler}, nil
 }
 
-func createHandler(c *Config, consumer consumer.Traces) fdbTraceHandler {
+func createHandler(c *Config, consumer consumer.Traces, obsrecv *obsreport.Receiver) fdbTraceHandler {
 	switch {
 	case c.Format == OPENTELEMETRY:
-		return &openTelemetryHandler{consumer: consumer}
+      return &openTelemetryHandler{consumer: consumer, obsrecv: obsrecv}
 	case c.Format == OPENTRACING:
-		return &openTracingHandler{consumer: consumer}
+      return &openTracingHandler{consumer: consumer, obsrecv: obsrecv}
 	default:
 		return nil
 	}

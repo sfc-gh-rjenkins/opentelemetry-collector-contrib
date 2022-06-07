@@ -52,11 +52,15 @@ func TestOpenTelemetryTraceHandler(t *testing.T) {
 		assert.Equal(t, "Transaction", span.Name())
 		assert.Equal(t, "SPAN_KIND_SERVER", span.Kind().String())
 		assert.Equal(t, pdata.StatusCodeOk, span.Status().Code())
+		assert.Equal(t, uint32(0), span.DroppedEventsCount())
+		assert.Equal(t, uint32(0), span.DroppedAttributesCount())
+		assert.Equal(t, uint32(0), span.DroppedLinksCount())
 		assert.Equal(t, 0, span.Links().Len())
 		assert.Equal(t, 0, span.Events().Len())
 		assert.Equal(t, 1, span.Attributes().Len())
-		attrs := span.Attributes().AsRaw()
-		assert.Equal(t, "127.0.0.1:4700", attrs["address"])
+		attr, ok := span.Attributes().Get("address")
+		assert.True(t, ok)
+		assert.Equal(t, "127.0.0.1:4700", attr.AsString())
 		return nil
 	}
 

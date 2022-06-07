@@ -76,6 +76,20 @@ func TestOpenTelemetryTraceHandler(t *testing.T) {
 	}
 }
 
+func TestOpenTelemetryMalformed(t *testing.T) {
+	config := createDefaultConfig()
+	settings := componenttest.NewNopReceiverCreateSettings()
+	obsrecv := obsreport.NewReceiver(obsreport.ReceiverSettings{
+		ReceiverID:             config.ID(),
+		Transport:              "udp",
+		ReceiverCreateSettings: settings,
+	})
+
+	handler := openTelemetryHandler{obsrecv: obsrecv}
+	err := handler.Handle([]byte("foo"))
+	assert.Error(t, err, "expected error")
+}
+
 func TestOpenTracingHandler(t *testing.T) {
 	trace := &OpenTracing{
 		ArrLen:         1,

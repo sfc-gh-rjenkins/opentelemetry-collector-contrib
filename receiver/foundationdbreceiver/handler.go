@@ -33,9 +33,9 @@ func (h *openTracingHandler) Handle(data []byte) error {
 	}
 	span := traces.ResourceSpans().AppendEmpty().InstrumentationLibrarySpans().AppendEmpty().Spans().AppendEmpty()
 	trace.getSpan(&span)
-    err = h.consumer.ConsumeTraces(context.Background(), traces)
+	err = h.consumer.ConsumeTraces(context.Background(), traces)
 	h.obsrecv.EndTracesOp(ctx, OPENTRACING, traces.SpanCount(), err)
-    return err
+	return err
 }
 
 type openTelemetryHandler struct {
@@ -57,6 +57,6 @@ func (h *openTelemetryHandler) Handle(data []byte) error {
 	span := traces.ResourceSpans().AppendEmpty().InstrumentationLibrarySpans().AppendEmpty().Spans().AppendEmpty()
 	trace.getSpan(&span)
 	err = h.consumer.ConsumeTraces(context.Background(), traces)
-    h.obsrecv.EndTracesOp(ctx, OPENTELEMETRY, traces.SpanCount(), err)
-    return err
+	h.obsrecv.EndTracesOp(ctx, OPENTELEMETRY, traces.SpanCount(), err)
+	return err
 }

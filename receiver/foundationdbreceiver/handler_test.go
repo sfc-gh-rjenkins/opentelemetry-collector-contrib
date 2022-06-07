@@ -6,8 +6,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/vmihailenco/msgpack/v5"
+	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/model/pdata"
+	"go.opentelemetry.io/collector/obsreport"
 )
 
 type MockTraceConsumer struct {
@@ -27,6 +29,51 @@ func (mtc *MockTraceConsumer) ConsumeTraces(ctx context.Context, td pdata.Traces
 
 func (mtc *MockTraceConsumer) Capabilities() consumer.Capabilities {
 	return consumer.Capabilities{}
+}
+
+func TestOpenTelemetryTraceHandler(t *testing.T) {
+    // Sample of raw opentelemtry msgpack encoded trace
+	var data = []byte{156, 207, 184, 70, 109, 229, 195, 229, 42, 78, 207, 163, 89, 69, 137,
+		44, 190, 108, 95, 207, 14, 54, 176, 196, 158, 40, 251, 244, 207, 0, 0, 0, 0, 0, 0, 0, 0,
+		171, 84, 114, 97, 110, 115, 97, 99, 116, 105, 111, 110, 203, 65, 216, 167, 126, 179, 33,
+		156, 246, 203, 65, 216, 167, 126, 179, 33, 156, 246, 204, 2, 204, 1, 144, 144, 129, 167,
+		97, 100, 100, 114, 101, 115, 115, 174, 49, 50, 55, 46, 48, 46, 48, 46, 49, 58, 52, 55, 48,
+		48}
+
+	verifyTrace := func(td pdata.Traces) error {
+		assert.Equal(t, 1, td.SpanCount())
+		spans := td.ResourceSpans()
+		span := spans.At(0).InstrumentationLibrarySpans().At(0).Spans().At(0)
+		assert.Equal(t, "4e2ae5c3e56d46b85f6cbe2c894559a3", span.TraceID().HexString())
+		assert.Equal(t, "f4fb289ec4b0360e", span.SpanID().HexString())
+		assert.Equal(t, "2022-06-06 13:02:04.525205135 +0000 UTC", span.StartTimestamp().String())
+		assert.Equal(t, "2022-06-06 13:02:04.525205135 +0000 UTC", span.EndTimestamp().String())
+		assert.Equal(t, "", span.ParentSpanID().HexString())
+		assert.Equal(t, "Transaction", span.Name())
+		assert.Equal(t, "SPAN_KIND_SERVER", span.Kind().String())
+		assert.Equal(t, pdata.StatusCodeOk, span.Status().Code())
+		assert.Equal(t, 0, span.Links().Len())
+		assert.Equal(t, 0, span.Events().Len())
+		assert.Equal(t, 1, span.Attributes().Len())
+		attrs := span.Attributes().AsRaw()
+		assert.Equal(t, "127.0.0.1:4700", attrs["address"])
+		return nil
+	}
+
+	mockConsumer := MockTraceConsumer{verifier: verifyTrace}
+	config := createDefaultConfig()
+	settings := componenttest.NewNopReceiverCreateSettings()
+	obsrecv := obsreport.NewReceiver(obsreport.ReceiverSettings{
+		ReceiverID:             config.ID(),
+		Transport:              "udp",
+		ReceiverCreateSettings: settings,
+	})
+
+	handler := openTelemetryHandler{consumer: &mockConsumer, obsrecv: obsrecv}
+	err := handler.Handle(data)
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestOpenTracingHandler(t *testing.T) {
@@ -68,13 +115,29 @@ func TestOpenTracingHandler(t *testing.T) {
 	}
 
 	mockConsumer := MockTraceConsumer{verifier: verifyTrace}
-	handler := openTracingHandler{consumer: &mockConsumer}
+	config := createDefaultConfig()
+	settings := componenttest.NewNopReceiverCreateSettings()
+	obsrecv := obsreport.NewReceiver(obsreport.ReceiverSettings{
+		ReceiverID:             config.ID(),
+		Transport:              "udp",
+		ReceiverCreateSettings: settings,
+	})
+
+	handler := openTracingHandler{consumer: &mockConsumer, obsrecv: obsrecv}
 	err = handler.Handle(data)
 	assert.NoError(t, err)
 }
 
 func TestOpenTracingMalformed(t *testing.T) {
-	handler := openTracingHandler{}
+	config := createDefaultConfig()
+	settings := componenttest.NewNopReceiverCreateSettings()
+	obsrecv := obsreport.NewReceiver(obsreport.ReceiverSettings{
+		ReceiverID:             config.ID(),
+		Transport:              "udp",
+		ReceiverCreateSettings: settings,
+	})
+
+	handler := openTracingHandler{obsrecv: obsrecv}
 	err := handler.Handle([]byte("foo"))
 	assert.Error(t, err, "expected error")
 }
@@ -96,7 +159,7 @@ func BenchmarkOpenTracingNoTags(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	handler := openTracingHandler{consumer: &MockTraceConsumer{}}
+	handler := openTracingHandler{consumer: &MockTraceConsumer{}, obsrecv: obsreport.NewReceiver(obsreport.ReceiverSettings{})}
 	for i := 0; i < b.N; i++ {
 		err := handler.Handle(data)
 		if err != nil {
@@ -128,7 +191,7 @@ func BenchmarkOpenTracingTagsAndParents(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	handler := openTracingHandler{consumer: &MockTraceConsumer{}}
+	handler := openTracingHandler{consumer: &MockTraceConsumer{}, obsrecv: obsreport.NewReceiver(obsreport.ReceiverSettings{})}
 	for i := 0; i < b.N; i++ {
 		err := handler.Handle(data)
 		if err != nil {
